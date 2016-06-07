@@ -2558,6 +2558,7 @@ LIBGRPC_SRC = \
     src/core/lib/transport/static_metadata.c \
     src/core/lib/transport/transport.c \
     src/core/lib/transport/transport_op_string.c \
+    src/core/lib/tunnel/grpc_tunnel.c \
     src/core/ext/transport/chttp2/server/secure/server_secure_chttp2.c \
     src/core/ext/transport/chttp2/transport/bin_encoder.c \
     src/core/ext/transport/chttp2/transport/chttp2_plugin.c \
@@ -3153,6 +3154,7 @@ LIBGRPC_UNSECURE_SRC = \
     src/core/lib/transport/static_metadata.c \
     src/core/lib/transport/transport.c \
     src/core/lib/transport/transport_op_string.c \
+    src/core/lib/tunnel/grpc_tunnel.c \
     src/core/ext/transport/chttp2/server/insecure/server_chttp2.c \
     src/core/ext/transport/chttp2/transport/bin_encoder.c \
     src/core/ext/transport/chttp2/transport/chttp2_plugin.c \
