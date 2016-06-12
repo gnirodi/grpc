@@ -50,11 +50,12 @@
  *     of the supplied call?
  */
 grpc_endpoint *grpc_tunnel_create(
+		grpc_exec_ctx *exec_ctx,
 		grpc_call *call,
 		grpc_metadata_array *initial_metadata_to_send,
 		grpc_metadata_array *initial_metadata_to_receive,
 		grpc_metadata_array *trailing_metadata,
-		grpc_channel_args *channel_args);
+		grpc_closure *notify_on_connect_cb);
 
 /**
  * ep must be a grpc_tunnel endpoint. trailing_metadata only applies for
