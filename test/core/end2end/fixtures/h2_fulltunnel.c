@@ -52,28 +52,61 @@
 
 typedef struct fulltunnelstack_fixture_data {
   char *localaddr;
+	// TODO(gnirodi): Revert to using localaddr, remove tunnel_bind_addr;
+  // DO NOT SUBMIT
+  char *tunnel_bind_addr;
+  grpc_completion_queue *binding_cq;
+  grpc_tunnel_channel_binding* tunnel_channel_binding;
 } fulltunnelstack_fixture_data;
 
 static grpc_end2end_test_fixture chttp2_create_fixture_fulltunnelstack(
     grpc_channel_args *client_args, grpc_channel_args *server_args) {
   grpc_end2end_test_fixture f;
   int port = grpc_pick_unused_port_or_die();
+  int bind_port = grpc_pick_unused_port_or_die();
   fulltunnelstack_fixture_data *ffd =
   		gpr_malloc(sizeof(fulltunnelstack_fixture_data));
   memset(&f, 0, sizeof(f));
 
   gpr_join_host_port(&ffd->localaddr, "localhost", port);
+  gpr_join_host_port(&ffd->tunnel_bind_addr, "localhost", bind_port);
 
   f.fixture_data = ffd;
   f.cq = grpc_completion_queue_create(NULL);
 
+  ffd->tunnel_channel_binding = grpc_create_tunnel_channel_binding(
+  		client_args, NULL);
+  GPR_ASSERT(ffd->tunnel_channel_binding);
+  ffd->binding_cq = grpc_completion_queue_create(NULL);
+  grpc_tunnel_channel_binding_register_completion_queue(
+  		ffd->tunnel_channel_binding, ffd->binding_cq, NULL);
+  GPR_ASSERT(grpc_tunnel_channel_binding_add_insecure_http2_port(
+  		ffd->tunnel_channel_binding, ffd->tunnel_bind_addr));
+  grpc_tunnel_channel_binding_start(ffd->tunnel_channel_binding);
+
   return f;
+}
+
+static gpr_timespec get_timeout_to_millis(int x) {
+	return gpr_time_add(
+			gpr_now(GPR_CLOCK_MONOTONIC),
+			gpr_time_from_micros((int64_t)(1e3 * (x)),
+													 GPR_TIMESPAN));
+}
+
+static void drain_cq(grpc_completion_queue *cq) {
+  grpc_event ev;
+  do {
+    ev = grpc_completion_queue_next(cq, get_timeout_to_millis(5000), NULL);
+  } while (ev.type != GRPC_QUEUE_SHUTDOWN);
 }
 
 void chttp2_init_client_fulltunnelstack(grpc_end2end_test_fixture *f,
                                   			grpc_channel_args *client_args) {
   fulltunnelstack_fixture_data *ffd = f->fixture_data;
-  f->client = grpc_insecure_channel_create(ffd->localaddr, client_args, NULL);
+
+  // Need to create a tunnel_bound_channel
+  f->client = grpc_tunnel_channel_create(ffd->localaddr, client_args, NULL);
   GPR_ASSERT(f->client);
 }
 
@@ -83,6 +116,7 @@ void chttp2_init_server_fulltunnelstack(grpc_end2end_test_fixture *f,
   if (f->server) {
     grpc_server_destroy(f->server);
   }
+  // Need to create a tunnel_connected_server
   f->server = grpc_server_create(server_args, NULL);
   grpc_server_register_completion_queue(f->server, f->cq, NULL);
   GPR_ASSERT(grpc_server_add_insecure_http2_port(f->server, ffd->localaddr));
@@ -91,8 +125,18 @@ void chttp2_init_server_fulltunnelstack(grpc_end2end_test_fixture *f,
 
 void chttp2_tear_down_fulltunnelstack(grpc_end2end_test_fixture *f) {
   fulltunnelstack_fixture_data *ffd = f->fixture_data;
-  gpr_free(ffd->localaddr);
-  gpr_free(ffd);
+  if (f->fixture_data) {
+  	grpc_shutdown_tunnel_channel_binding(
+  			ffd->tunnel_channel_binding, ffd->binding_cq);
+		grpc_destroy_tunnel_channel_binding(ffd->tunnel_channel_binding);
+    grpc_completion_queue_shutdown(ffd->binding_cq);
+    drain_cq(ffd->binding_cq);
+    grpc_completion_queue_destroy(ffd->binding_cq);
+		gpr_free(ffd->tunnel_bind_addr);
+		gpr_free(ffd->localaddr);
+		gpr_free(ffd);
+		f->fixture_data = NULL;
+  }
 }
 
 /* All test configurations */

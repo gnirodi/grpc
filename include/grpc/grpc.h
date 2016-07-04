@@ -247,6 +247,48 @@ GRPCAPI grpc_channel *grpc_lame_client_channel_create(
 /** Close and destroy a grpc channel */
 GRPCAPI void grpc_channel_destroy(grpc_channel *channel);
 
+/** gRPC Tunneling related interfaces */
+
+/** Create a tunneling client channel to tunneling 'target'. The interface
+    is identical to grpc_insecure_channel_create, except that its the tunnel
+    binding that can be setup to be insecure or secure */
+GRPCAPI grpc_channel *grpc_tunnel_channel_create(
+		const char *target, const grpc_channel_args *args, void *reserved);
+
+/** Creates a channel binding server that listens to tunneling requests. The
+    interface is otherwise identical to grpc_server_create */
+GRPCAPI grpc_tunnel_channel_binding *grpc_create_tunnel_channel_binding(
+		grpc_channel_args *tunnel_binding_args, void *reserved);
+
+GRPCAPI void grpc_shutdown_tunnel_channel_binding(
+		grpc_tunnel_channel_binding *tunnel_channel_binding,
+		grpc_completion_queue* channel_binding_queue);
+
+/** Close and destroy a tunneling channel binding */
+GRPCAPI void grpc_destroy_tunnel_channel_binding(
+		grpc_tunnel_channel_binding* tunnel_channel_binding);
+
+// DO NOT SUBMIT
+GRPCAPI void grpc_tunnel_channel_binding_register_completion_queue(
+		grpc_tunnel_channel_binding* tunnel_channel_binding,
+		grpc_completion_queue* channel_binding_queue,
+		void* reserved);
+
+GRPCAPI int grpc_tunnel_channel_binding_add_insecure_http2_port(
+		grpc_tunnel_channel_binding* tunnel_channel_binding,
+		char* local_binding_address);
+
+GRPCAPI void grpc_tunnel_channel_binding_start(
+		grpc_tunnel_channel_binding* tunnel_channel_binding);
+
+// Not sure this ought to be exposed as an interface
+GRPCAPI grpc_call_error grpc_tunnel_channel_binding_get_call(
+		grpc_tunnel_channel_binding* tunnel_channel_binding, grpc_call **call,
+		grpc_call_details *details,
+    grpc_metadata_array *initial_metadata,
+    grpc_completion_queue *cq_bound_to_call,
+    grpc_completion_queue *cq_for_notification, void *tag);
+
 /* Error handling for grpc_call
    Most grpc_call functions return a grpc_error. If the error is not GRPC_OK
    then the operation failed due to some unsatisfied precondition.

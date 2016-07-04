@@ -344,6 +344,13 @@ GRPCAPI int grpc_server_add_secure_http2_port(grpc_server *server,
                                               const char *addr,
                                               grpc_server_credentials *creds);
 
+/* --- Secure Tunnel channel binding related interfaces.  --- */
+GRPCAPI int grpc_tunnel_channel_binding_add_secure_port(
+		grpc_tunnel_channel_binding *tunnel_channel_binding,
+		char *address,
+		grpc_server_credentials *tunnel_creds);
+
+
 /* --- Call specific credentials. --- */
 
 /* Sets a credentials to a call. Can only be called on the client side before

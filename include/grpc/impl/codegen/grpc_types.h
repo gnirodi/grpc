@@ -56,6 +56,12 @@ typedef struct grpc_channel grpc_channel;
 /** A server listens to some port and responds to request calls */
 typedef struct grpc_server grpc_server;
 
+/** A tunneling server intended for binding to a grpc_channel.
+ *  The server listens to some port and responds  to tunneling request calls */
+typedef struct {
+	grpc_server* channel_bound_server;
+} grpc_tunnel_channel_binding;
+
 /** A Call represents an RPC. When created, it is in a configuration state
     allowing properties to be set until it is invoked. After invoke, the Call
     can have messages written to it and read from it. */

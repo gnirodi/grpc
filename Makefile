@@ -2634,6 +2634,7 @@ LIBGRPC_SRC = \
     src/core/ext/client_config/uri_parser.c \
     src/core/ext/transport/chttp2/server/insecure/server_chttp2.c \
     src/core/ext/transport/chttp2/client/insecure/channel_create.c \
+    src/core/ext/transport/chttp2/client/tunnel/tunnel_channel_create.c \
     src/core/ext/lb_policy/grpclb/load_balancer_api.c \
     src/core/ext/lb_policy/grpclb/proto/grpc/lb/v1/load_balancer.pb.c \
     third_party/nanopb/pb_common.c \
@@ -3181,6 +3182,7 @@ LIBGRPC_UNSECURE_SRC = \
     src/core/ext/transport/chttp2/transport/writing.c \
     src/core/ext/transport/chttp2/alpn/alpn.c \
     src/core/ext/transport/chttp2/client/insecure/channel_create.c \
+    src/core/ext/transport/chttp2/client/tunnel/tunnel_channel_create.c \
     src/core/ext/client_config/channel_connectivity.c \
     src/core/ext/client_config/client_channel.c \
     src/core/ext/client_config/client_channel_factory.c \
