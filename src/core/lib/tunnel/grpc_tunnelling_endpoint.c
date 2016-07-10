@@ -31,7 +31,7 @@
  *
  */
 
-#include "src/core/lib/tunnel/grpc_tunnel.h"
+#include "grpc_tunnelling_endpoint.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -49,8 +49,6 @@ typedef struct {
   grpc_endpoint base;
   /* The call supplied during creation used for tunneling */
   grpc_call *call;
-  /* The call execution context supplied during creation */
-  grpc_exec_ctx *exec_ctx;
 
   /* status of this tunnel */
   enum grpc_tunnel_status {
@@ -207,25 +205,27 @@ static void on_write(grpc_exec_ctx *exec_ctx, void *tunnelp, bool success) {
 
 static void on_connect(
 		grpc_exec_ctx *exec_ctx, void *tunnelp, bool success) {
-  if (!success) {
-  	return;
-  }
   grpc_tunnel *tunnel = (grpc_tunnel *)tunnelp;
   GPR_ASSERT(tunnel->base.vtable == &vtable);
+  if (!success) {
+  	tunnel->tunnel_status = TUNNEL_CLOSED;
+  	return;
+  }
+	tunnel->tunnel_status = TUNNEL_ESTABLISHED;
 
 }
 
 static void on_disconnect(
 		grpc_exec_ctx *exec_ctx, void *tunnelp, bool success) {
+  grpc_tunnel *tunnel = (grpc_tunnel *)tunnelp;
+  GPR_ASSERT(tunnel->base.vtable == &vtable);
+  tunnel->tunnel_status = TUNNEL_CLOSED;
   if (!success) {
   	return;
   }
-  grpc_tunnel *tunnel = (grpc_tunnel *)tunnelp;
-  GPR_ASSERT(tunnel->base.vtable == &vtable);
-
 }
 
-grpc_endpoint *grpc_tunnel_create(
+grpc_endpoint *grpc_tunnelling_endpoint_create(
 		grpc_exec_ctx *exec_ctx,
 		grpc_call *call,
 		grpc_metadata_array *initial_metadata_to_send,
@@ -233,9 +233,9 @@ grpc_endpoint *grpc_tunnel_create(
 		grpc_metadata_array *trailing_metadata,
 		grpc_closure *notify_on_connect_cb) {
   grpc_tunnel *tunnel = (grpc_tunnel *)gpr_malloc(sizeof(grpc_tunnel));
+  memset(tunnel, 0, sizeof(*tunnel));
   tunnel->base.vtable = &vtable;
   tunnel->call = call;
-  tunnel->exec_ctx = exec_ctx;
   tunnel->peer_string = kPeer;
   tunnel->initial_metadata_to_send = initial_metadata_to_send;
   tunnel->initial_metadata_to_receive = initial_metadata_to_receive;
@@ -245,6 +245,7 @@ grpc_endpoint *grpc_tunnel_create(
   grpc_closure_init(&tunnel->on_disconnect, on_disconnect, tunnel);
   grpc_closure_init(&tunnel->on_read, on_read, tunnel);
   grpc_closure_init(&tunnel->on_write, on_write, tunnel);
+  tunnel->tunnel_status = TUNNEL_NEW;
 
 	uint8_t is_client_grpc_call = grpc_call_is_client(call);
   if (is_client_grpc_call) {
@@ -308,5 +309,6 @@ grpc_endpoint *grpc_tunnel_create(
   		(size_t)(connect_op - &tunnel->connect_ops[0]),
 			&tunnel->on_connect);
 
+  tunnel->tunnel_status = TUNNEL_CONNECT_IN_PROGRESS;
   return &tunnel->base;
 }

@@ -40,6 +40,7 @@
 #include <grpc/support/slice.h>
 #include <grpc/support/slice_buffer.h>
 
+#include "grpc/impl/codegen/grpc_types.h"
 #include "src/core/ext/client_config/client_channel.h"
 #include "src/core/ext/client_config/resolver_registry.h"
 #include "src/core/ext/transport/chttp2/transport/chttp2_transport.h"
@@ -50,6 +51,7 @@
 #include "src/core/lib/security/credentials/credentials.h"
 #include "src/core/lib/surface/api_trace.h"
 #include "src/core/lib/surface/channel.h"
+#include "src/core/lib/tunnel/grpc_tunnelling_endpoint.h"
 
 static void *tag(intptr_t t) { return (void *)t; }
 
@@ -63,9 +65,22 @@ typedef struct {
   grpc_closure initial_string_sent;
   gpr_slice_buffer initial_string_buffer;
 
-  grpc_endpoint *tunnel_bound_endpoint;
+	// binding supplied to this channel via grpc_channel_add_tunnel_binding()
+	// The binding is not owned by the tunnel_connector
+	grpc_tunnel_channel_binding *tunnel_channel_binding;
 
-  grpc_closure connected;
+	// The binding call used as the transport for this server, akin to a
+	// TCP socket.
+	grpc_call *binding_call;
+
+	grpc_call_details call_details;
+	grpc_metadata_array initial_metadata_to_send;
+	grpc_metadata_array initial_metadata_to_receive;
+	grpc_metadata_array trailing_metadata;
+
+	grpc_endpoint *tunneling_endpoint;
+
+	grpc_closure on_endpoint_available;
 } tunnel_connector;
 
 static gpr_timespec get_timeout_to_millis(int x) {
@@ -94,10 +109,11 @@ static void on_initial_connect_string_sent(grpc_exec_ctx *exec_ctx, void *arg,
   tunnel_connector_unref(exec_ctx, arg);
 }
 
-static void connected(grpc_exec_ctx *exec_ctx, void *arg, bool success) {
+static void on_endpoint_available(
+		grpc_exec_ctx *exec_ctx, void *arg, bool success) {
   tunnel_connector *c = arg;
   grpc_closure *notify;
-  grpc_endpoint *tunnel_bound_endpoint = c->tunnel_bound_endpoint;
+  grpc_endpoint *tunnel_bound_endpoint = c->tunneling_endpoint;
   if (tunnel_bound_endpoint != NULL) {
     if (!GPR_SLICE_IS_EMPTY(c->args.initial_connect_string)) {
       grpc_closure_init(&c->initial_string_sent, on_initial_connect_string_sent,
@@ -114,8 +130,8 @@ static void connected(grpc_exec_ctx *exec_ctx, void *arg, bool success) {
     }
     c->result->transport = grpc_create_chttp2_transport(
     		exec_ctx, c->args.channel_args, tunnel_bound_endpoint, 1);
-    grpc_chttp2_transport_start_reading(exec_ctx, c->result->transport, NULL,
-                                        0);
+    grpc_chttp2_transport_start_reading(
+    		exec_ctx, c->result->transport, NULL, 0);
     GPR_ASSERT(c->result->transport);
     c->result->channel_args = c->args.channel_args;
   } else {
@@ -141,24 +157,35 @@ static void tunnel_connector_connect(
   c->notify = notify;
   c->args = *args;
   c->result = result;
-  c->tunnel_bound_endpoint = NULL;
-  grpc_closure_init(&c->connected, connected, c);
-  // TODO (find a way to connect using the tunneling server)
-  grpc_tcp_client_connect(exec_ctx, &c->connected, &c->tunnel_bound_endpoint,
-                          args->interested_parties, args->addr, args->addr_len,
-                          args->deadline);
+  grpc_closure_init(&c->on_endpoint_available, on_endpoint_available, c);
+
+
+
+  grpc_call_error error = 	grpc_server_request_call(
+			c->tunnel_channel_binding->channel_bound_server,
+			&c->binding_call, &c->call_details, &c->initial_metadata_to_send,
+			c->tunnel_channel_binding->channel_binding_queue,
+			c->tunnel_channel_binding->channel_binding_queue, tag(100));
+  GPR_ASSERT(GRPC_CALL_OK == error);
+
+  c->tunneling_endpoint = grpc_tunnelling_endpoint_create(
+			exec_ctx, c->binding_call, &c->initial_metadata_to_send,
+			&c->initial_metadata_to_receive, &c->trailing_metadata,
+			&c->on_endpoint_available);
 }
 
 static const grpc_connector_vtable tunnel_connector_vtable = {
-    tunnel_connector_ref,
-		tunnel_connector_unref,
-		tunnel_connector_shutdown,
-		tunnel_connector_connect};
+    tunnel_connector_ref, tunnel_connector_unref, tunnel_connector_shutdown,
+		tunnel_connector_connect
+};
 
 typedef struct {
   grpc_client_channel_factory base;
   gpr_refcount refs;
   grpc_channel_args *merge_args;
+
+  // The tunnel_bound_channel_factory does not own the binding
+  grpc_tunnel_channel_binding* tunnel_channel_binding;
   grpc_channel *master;
 } tunnel_bound_channel_factory;
 
@@ -191,6 +218,7 @@ static grpc_subchannel *tunnel_bound_channel_factory_create_subchannel(
   grpc_subchannel *s;
   memset(c, 0, sizeof(*c));
   c->base.vtable = &tunnel_connector_vtable;
+  c->tunnel_channel_binding = f->tunnel_channel_binding;
   gpr_ref_init(&c->refs, 1);
   args->args = final_args;
   s = grpc_subchannel_create(exec_ctx, &c->base, args);
@@ -235,9 +263,10 @@ static const grpc_client_channel_factory_vtable
                    - connect to it (trying alternatives as presented)
                    - perform handshakes
    TODO(gnirodi) This ought to be secure!! */
-grpc_channel *grpc_tunnel_channel_create(const char *target,
-                                         const grpc_channel_args *args,
-                                         void *reserved) {
+grpc_channel *grpc_tunnel_channel_create( grpc_tunnel_channel_binding *binding,
+																					const char *target,
+                                          const grpc_channel_args *args,
+                                          void *reserved) {
   grpc_exec_ctx exec_ctx = GRPC_EXEC_CTX_INIT;
   GRPC_API_TRACE(
       "grpc_insecure_channel_create(target=%p, args=%p, reserved=%p)", 3,
@@ -247,6 +276,7 @@ grpc_channel *grpc_tunnel_channel_create(const char *target,
   tunnel_bound_channel_factory *f = gpr_malloc(sizeof(*f));
   memset(f, 0, sizeof(*f));
   f->base.vtable = &tunnel_bound_channel_factory_vtable;
+  f->tunnel_channel_binding = binding;
   gpr_ref_init(&f->refs, 1);
   f->merge_args = grpc_channel_args_copy(args);
 
@@ -254,7 +284,7 @@ grpc_channel *grpc_tunnel_channel_create(const char *target,
       &exec_ctx, &f->base, target, GRPC_CLIENT_CHANNEL_TYPE_REGULAR, NULL);
   if (channel != NULL) {
     f->master = channel;
-    GRPC_CHANNEL_INTERNAL_REF(f->master, "grpc_insecure_channel_create");
+    GRPC_CHANNEL_INTERNAL_REF(f->master, "grpc_tunnel_channel_create");
   }
   tunnel_bound_channel_factory_unref(&exec_ctx, &f->base);
 
@@ -262,14 +292,16 @@ grpc_channel *grpc_tunnel_channel_create(const char *target,
 
   return channel != NULL ? channel : grpc_lame_client_channel_create(
                                          target, GRPC_STATUS_INTERNAL,
-                                         "Failed to create client channel");
+                                         "Failed to create tunnel channel");
 }
+
+// *****************  Tunnel Binding related *******************
 
 grpc_tunnel_channel_binding *grpc_create_tunnel_channel_binding(
 		grpc_channel_args *tunnel_binding_args, void *reserved) {
-
 	grpc_tunnel_channel_binding *binding =
 			gpr_malloc(sizeof(grpc_tunnel_channel_binding));
+  memset(binding, 0, sizeof(*binding));
 	binding->channel_bound_server =
 			grpc_server_create(tunnel_binding_args, reserved);
 	return binding;
@@ -278,11 +310,12 @@ grpc_tunnel_channel_binding *grpc_create_tunnel_channel_binding(
 void grpc_shutdown_tunnel_channel_binding(
 		grpc_tunnel_channel_binding *tunnel_channel_binding,
 		grpc_completion_queue* channel_binding_queue) {
-  if (!tunnel_channel_binding->channel_bound_server) return;
+  if (!tunnel_channel_binding->channel_bound_server) {
+  	return;
+  }
   grpc_server_shutdown_and_notify(tunnel_channel_binding->channel_bound_server,
   		channel_binding_queue, tag(1000));
-  GPR_ASSERT(grpc_completion_queue_pluck(
-  		channel_binding_queue, tag(1000),
+  GPR_ASSERT(grpc_completion_queue_pluck( channel_binding_queue, tag(1000),
 			get_timeout_to_millis(5000), NULL).type == GRPC_OP_COMPLETE);
   grpc_server_destroy(tunnel_channel_binding->channel_bound_server);
   tunnel_channel_binding->channel_bound_server = NULL;
@@ -295,11 +328,11 @@ void grpc_destroy_tunnel_channel_binding(
 
 void grpc_tunnel_channel_binding_register_completion_queue(
 		grpc_tunnel_channel_binding* tunnel_channel_binding,
-		grpc_completion_queue* channel_binding_queue,
-		void* reserved) {
+		grpc_completion_queue* channel_binding_queue, void* reserved) {
+	GPR_ASSERT(!tunnel_channel_binding->channel_binding_queue);
+	tunnel_channel_binding->channel_binding_queue = channel_binding_queue;
 	grpc_server_register_completion_queue(
-			tunnel_channel_binding->channel_bound_server,
-			channel_binding_queue,
+			tunnel_channel_binding->channel_bound_server, channel_binding_queue,
 			NULL);
 }
 
@@ -310,28 +343,15 @@ int grpc_tunnel_channel_binding_add_insecure_http2_port(
 			tunnel_channel_binding->channel_bound_server, local_binding_address);
 }
 
-int grpc_tunnel_channel_binding_add_secure_port(
+int grpc_tunnel_channel_binding_add_secure_http2_port(
 		grpc_tunnel_channel_binding* tunnel_channel_binding,
-		char* local_binding_address,
-		grpc_server_credentials* tunnel_creds) {
+		char* local_binding_address, grpc_server_credentials* tunnel_creds) {
 	return grpc_server_add_secure_http2_port(
-			tunnel_channel_binding->channel_bound_server,
-			local_binding_address,
+			tunnel_channel_binding->channel_bound_server, local_binding_address,
 			tunnel_creds);
 }
 
 void grpc_tunnel_channel_binding_start(
 		grpc_tunnel_channel_binding* tunnel_channel_binding) {
   grpc_server_start(tunnel_channel_binding->channel_bound_server);
-}
-
-grpc_call_error grpc_tunnel_channel_binding_get_call(
-		grpc_tunnel_channel_binding* tunnel_channel_binding, grpc_call **call,
-		grpc_call_details *details,
-    grpc_metadata_array *initial_metadata,
-    grpc_completion_queue *cq_bound_to_call,
-    grpc_completion_queue *cq_for_notification, void *tag) {
-	return grpc_server_request_call(
-			tunnel_channel_binding->channel_bound_server, call, details,
-			initial_metadata, cq_bound_to_call, cq_for_notification, tag);
 }

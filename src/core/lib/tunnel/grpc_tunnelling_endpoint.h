@@ -49,7 +49,7 @@
  *   - Could we assume that the authentication is valid for the entire lifetime
  *     of the supplied call?
  */
-grpc_endpoint *grpc_tunnel_create(
+grpc_endpoint *grpc_tunnelling_endpoint_create(
 		grpc_exec_ctx *exec_ctx,
 		grpc_call *call,
 		grpc_metadata_array *initial_metadata_to_send,

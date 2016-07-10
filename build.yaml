@@ -230,6 +230,7 @@ filegroups:
   - src/core/lib/transport/static_metadata.h
   - src/core/lib/transport/transport.h
   - src/core/lib/transport/transport_impl.h
+  - src/core/lib/tunnel/grpc_tunnelling_endpoint.h
   src:
   - src/core/lib/channel/channel_args.c
   - src/core/lib/channel/channel_stack.c
@@ -313,6 +314,7 @@ filegroups:
   - src/core/lib/transport/static_metadata.c
   - src/core/lib/transport/transport.c
   - src/core/lib/transport/transport_op_string.c
+  - src/core/lib/tunnel/grpc_tunnelling_endpoint.c
   deps:
   - gpr
   uses:
@@ -571,6 +573,14 @@ filegroups:
   - grpc_base
   - grpc_client_config
   - grpc_secure
+- name: grpc_transport_chttp2_client_tunnel
+  src:
+  - src/core/ext/transport/chttp2/client/tunnel/tunnel_channel_create.c
+  uses:
+  - grpc_transport_chttp2
+  - grpc_base
+  - grpc_client_config
+  - grpc_secure
 - name: grpc_transport_chttp2_server_insecure
   src:
   - src/core/ext/transport/chttp2/server/insecure/server_chttp2.c
@@ -580,6 +590,13 @@ filegroups:
 - name: grpc_transport_chttp2_server_secure
   src:
   - src/core/ext/transport/chttp2/server/secure/server_secure_chttp2.c
+  uses:
+  - grpc_transport_chttp2
+  - grpc_base
+  - grpc_secure
+- name: grpc_transport_chttp2_server_tunnel
+  src:
+  - src/core/ext/transport/chttp2/server/tunnel/server_tunnel.c
   uses:
   - grpc_transport_chttp2
   - grpc_base
@@ -782,6 +799,8 @@ libs:
   - grpc_transport_chttp2_client_secure
   - grpc_transport_chttp2_server_insecure
   - grpc_transport_chttp2_client_insecure
+  - grpc_transport_chttp2_server_tunnel
+  - grpc_transport_chttp2_client_tunnel
   - grpc_lb_policy_grpclb
   - grpc_lb_policy_pick_first
   - grpc_lb_policy_round_robin
